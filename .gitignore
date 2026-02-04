@@ -1,0 +1,9 @@
+# Misc
+Screenshot*
+meal_ideas.txt
+
+# Python
+__pycache__/
+.pytest_cache/
+
+venv/
