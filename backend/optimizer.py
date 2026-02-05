@@ -81,12 +81,11 @@ def normalize(value, inverse=False):
 
 
 def avg_cost(meals):
-    return np.mean([m["cost"] for m in meals])
+    return np.mean([m.get("cost", 0) for m in meals])
 
 
 def avg_cook_time(meals):
-    return np.mean([m["time"] for m in meals])
-
+    return np.mean([m.get("time", 0) for m in meals])
 
 def calculate_macros(recipe):
     macros = recipe["nutrition"]["macronutrients"]
@@ -118,7 +117,7 @@ def match_macros(user_goal, meals):
 def diversity_measure(candidate_meals, diversity_rule):
     if not diversity_rule:
         return 1.0
-    cuisines = [m["cuisine"] for m in candidate_meals]
+    cuisines = [m.get("cuisine", "unknown") for m in candidate_meals]
     return len(set(cuisines)) / len(cuisines)
 
 
@@ -127,7 +126,7 @@ def leftover_utilization(candidate_meals, prioritize_existing):
 
 
 def cuisine_match(preferences, candidate_meals):
-    count = sum(m["cuisine"] in preferences for m in candidate_meals)
+    count = sum(m.get("cuisine", "unknown") in preferences for m in candidate_meals)
     return count / len(candidate_meals)
 
 
@@ -192,29 +191,30 @@ def evaluate_macros_and_micros(
     # ---------- MICROS ----------
     micro_scores = []
     micro_weights_list = []
-    for nutrient, guideline in FDA_GUIDELINES.items():
-        if nutrient in ("protein", "total_fat", "total_carbohydrate", "calories", "saturated_fat"):
-            continue
+    for __, nutrients in FDA_GUIDELINES.items():
+        for nutrient, guideline in nutrients.items():
+            if nutrient in ("protein", "total_fat", "total_carbohydrate", "calories", "saturated_fat"):
+                continue
 
-        actual = total.get(nutrient, 0)
-        if guideline <= 0:
-            continue
+            actual = total.get(nutrient, 0)
+            if guideline <= 0:
+                continue
 
-        ratio = actual / guideline
-        if 0.9 <= ratio <= 1.1:
-            nutrient_score = 1.0
-        else:
-            z = (ratio - 1.0) / 0.5
-            nutrient_score = float(np.exp(-abs(z)))
+            ratio = actual / guideline
+            if 0.9 <= ratio <= 1.1:
+                nutrient_score = 1.0
+            else:
+                z = (ratio - 1.0) / 0.5
+                nutrient_score = float(np.exp(-abs(z)))
 
-        # Base weight
-        base_w = MICRO_WEIGHTS.get(nutrient, DEFAULT_MICRO_WEIGHT)
-        # User-specific multiplier (default 1.0)
-        user_w = nutrient_priorities.get(nutrient, 1.0)
-        final_w = base_w * user_w
+            # Base weight
+            base_w = MICRO_WEIGHTS.get(nutrient, DEFAULT_MICRO_WEIGHT)
+            # User-specific multiplier (default 1.0)
+            user_w = nutrient_priorities.get(nutrient, 1.0)
+            final_w = base_w * user_w
 
-        micro_scores.append(nutrient_score * final_w)
-        micro_weights_list.append(final_w)
+            micro_scores.append(nutrient_score * final_w)
+            micro_weights_list.append(final_w)
 
     micro_score = float(np.sum(micro_scores) / np.sum(micro_weights_list)) if micro_weights_list else 0.5
     micro_score = float(np.clip(micro_score, 0.0, 1.0))
@@ -238,9 +238,14 @@ def evaluate_macros_and_micros(
 
 def score_meal_plan(user_prefs, candidate_meals):
     w = user_prefs["weights"]
-    cost_score = normalize(1 / avg_cost(candidate_meals), inverse=True)
+    avg_cost_val = avg_cost(candidate_meals)
+    cost_score = 0 if avg_cost_val == 0 else normalize(1 / avg_cost_val, inverse=True)
+
     nutrition_score = evaluate_macros_and_micros(candidate_meals, user_prefs=user_prefs, verbose=False)
-    time_score = normalize(1 / avg_cook_time(candidate_meals), inverse=True)
+
+    avg_time_val = avg_cook_time(candidate_meals)
+    time_score = 0 if avg_time_val == 0 else normalize(1 / avg_time_val, inverse=True)
+    
     diversity_score = diversity_measure(candidate_meals, user_prefs["diversity_rule"])
     leftover_score = leftover_utilization(candidate_meals, user_prefs["prioritize_existing_groceries"])
     preference_score = cuisine_match(user_prefs.get("cuisine_preferences", []), candidate_meals)
@@ -287,8 +292,8 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
         sim_matrix = np.zeros((N, N))
 
     # Objective terms
-    cost_term = pulp.lpSum(recipes[i]["cost"] * select[i] for i in range(N))
-    time_term = pulp.lpSum(recipes[i]["time"] * select[i] for i in range(N))
+    cost_term = pulp.lpSum(recipes[i].get("cost", 0) * select[i] for i in range(N))
+    time_term = pulp.lpSum(recipes[i].get("time", 0) * select[i] for i in range(N))
     if use_similarity:
         diversity_term = pulp.lpSum(sim_matrix[i][j] * y[(i, j)] for i in range(N) for j in range(i + 1, N))
     else:
@@ -298,7 +303,7 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
 
     # Meal count & budget constraints
     model += pulp.lpSum(select[i] for i in range(N)) == user_prefs["meal_count_per_day"]
-    model += pulp.lpSum(recipes[i]["cost"] * select[i] for i in range(N)) <= (user_prefs["budget_per_week"]/7*user_prefs["meal_count_per_day"])
+    model += pulp.lpSum(recipes[i].get("cost", 0) * select[i] for i in range(N)) <= (user_prefs["budget_per_week"]/7*user_prefs["meal_count_per_day"])
     
     model.solve()
     chosen = []
@@ -309,9 +314,9 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
 
     return chosen
 
-
-def plan_meals(user_prefs, recipe_json_path, use_similarity=True):
-    with open(recipe_json_path) as f:
+# TODO: Change from csv to json input and also database
+def plan_meals(user_prefs, recipe_csv_path, use_similarity=True):
+    with open(recipe_csv_path) as f:
         recipes = json.load(f)
     chosen_meals = optimize_meal_plan(user_prefs, recipes, use_similarity=use_similarity)
     score, fda_score = score_meal_plan(user_prefs, chosen_meals)
