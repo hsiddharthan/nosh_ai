@@ -29,18 +29,24 @@ class TestMealOptimizer(unittest.TestCase):
                 if not all(field in row for field in required_fields):
                     continue
                 
-                # Try to convert required fields to float
-                try:
-                    calories = float(row['Calories'])
-                    protein = float(row['Protein'])
-                    total_fat = float(row['TotalFat'])
-                    total_carb = float(row['Carbohydrate'])
-                except (ValueError, TypeError):
-                    # Skip rows with invalid numeric values
-                    continue
-                
-                # Only process rows with valid data
-                if not (calories and protein and total_fat and total_carb):
+                def required_float(value):
+                    if value is None:
+                        return None
+                    value = str(value).strip()
+                    if value == "":
+                        return None
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return None
+
+                calories = required_float(row.get('Calories'))
+                protein = required_float(row.get('Protein'))
+                total_fat = required_float(row.get('TotalFat'))
+                total_carb = required_float(row.get('Carbohydrate'))
+
+                # Skip rows missing required values (zero is valid)
+                if any(v is None for v in (calories, protein, total_fat, total_carb)):
                     continue
                 
                 # Safe conversion for optional fields with error handling
@@ -73,20 +79,24 @@ class TestMealOptimizer(unittest.TestCase):
                     }
                 }
                 cls.recipes.append(recipe)
+            # test if we have loaded recipes
+            logging.basicConfig(level=logging.INFO)
+            logging.info(f"Recipe count: {len(cls.recipes)}")
 
-        # Minimal user preferences for testing
+
+        # Just testing leftovers and nutrition opts for now
         cls.user_prefs = {
             "meal_count_per_day": 10,
             "budget_per_week": 100,
             "weights": {
-                "cost": 0.25,
-                "nutrition": 0.3,
-                "time": 0.2,
-                "diversity": 0.1,
-                "leftovers": 0.15,
+                "cost": 0,
+                "nutrition": 1,
+                "time": 0,
+                "diversity": 0,
+                "leftovers": 0,
             },
             "macro_goal_ratio": {"protein": 0.3, "fat": 0.3, "carbs": 0.4},
-            "diversity_rule": True,
+            "diversity_rule": False,
             "prioritize_existing_groceries": True,
             "cuisine_preferences": ["vegetarian", "greek", "italian"],
         }

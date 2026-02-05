@@ -113,7 +113,10 @@ def match_macros(user_goal, meals):
     diff = sum(abs(user_goal[k] - avg_ratio[k]) for k in user_goal) / 3
     return 1 - diff
 
-
+"""
+TODO: Diversity should be based on actual cuisine types or ingredients
+Should pull most important ingredients ie meat, spice profiles, etc. with Gemini
+"""
 def diversity_measure(candidate_meals, diversity_rule):
     if not diversity_rule:
         return 1.0
@@ -245,7 +248,7 @@ def score_meal_plan(user_prefs, candidate_meals):
 
     avg_time_val = avg_cook_time(candidate_meals)
     time_score = 0 if avg_time_val == 0 else normalize(1 / avg_time_val, inverse=True)
-    
+
     diversity_score = diversity_measure(candidate_meals, user_prefs["diversity_rule"])
     leftover_score = leftover_utilization(candidate_meals, user_prefs["prioritize_existing_groceries"])
     preference_score = cuisine_match(user_prefs.get("cuisine_preferences", []), candidate_meals)
@@ -329,23 +332,23 @@ def plan_meals(user_prefs, recipe_csv_path, use_similarity=True):
 
 
 # Example usage:
-if __name__ == "__main__":
-    user_prefs = {
-        "meal_count_per_day": 3,
-        "budget_per_week": 50,
-        "weights": {"cost":0.25, "nutrition":0.3, "time":0.2, "diversity":0.1, "leftovers":0.15},
-        "macro_goal_ratio": {"protein":0.3, "fat":0.3, "carbs":0.4},
-        "diversity_rule": True,
-        "prioritize_existing_groceries": True,
-        "cuisine_preferences": ["asian","mexican"],
-    }
+# if __name__ == "__main__":
+#     user_prefs = {
+#         "meal_count_per_day": 3,
+#         "budget_per_week": 50,
+#         "weights": {"cost":0.25, "nutrition":0.3, "time":0.2, "diversity":0.1, "leftovers":0.15},
+#         "macro_goal_ratio": {"protein":0.3, "fat":0.3, "carbs":0.4},
+#         "diversity_rule": True,
+#         "prioritize_existing_groceries": True,
+#         "cuisine_preferences": ["asian","mexican"],
+#     }
 
-    BASE_DIR = os.path.dirname(__file__)
-    SYNTHETIC_JSON_PATH = os.path.join(BASE_DIR, "tests", "synthetic_recipes.json")
+#     BASE_DIR = os.path.dirname(__file__)
+#     SYNTHETIC_JSON_PATH = os.path.join(BASE_DIR, "tests", "synthetic_recipes.json")
 
-    # Skip similarity LP for faster testing
-    result = plan_meals(user_prefs, SYNTHETIC_JSON_PATH, use_similarity=False)
-    print(result)
-    print("Chosen meals:", [m["name"] for m in result["chosen_meals"]])
-    print("Meal plan score:", round(result["total_score"],3))
-    print("FDA balance score:", round(result["fda_score"],3))
+#     # Skip similarity LP for faster testing
+#     result = plan_meals(user_prefs, SYNTHETIC_JSON_PATH, use_similarity=False)
+#     print(result)
+#     print("Chosen meals:", [m["name"] for m in result["chosen_meals"]])
+#     print("Meal plan score:", round(result["total_score"],3))
+#     print("FDA balance score:", round(result["fda_score"],3))
