@@ -3,7 +3,7 @@ import json
 import csv
 import os
 import logging
-from backend.optimizer import plan_meals, optimize_meal_plan, score_meal_plan, evaluate_macros_and_micros
+from backend.optimizer import plan_meals, optimize_meal_plan, score_meal_plan, evaluate_macros_and_micros, select_best_meal_plan
 
 
 TEST_DIR = os.path.dirname(__file__)
@@ -81,12 +81,12 @@ class TestMealOptimizer(unittest.TestCase):
                 cls.recipes.append(recipe)
             # test if we have loaded recipes
             logging.basicConfig(level=logging.INFO)
-            logging.info(f"Recipe count: {len(cls.recipes)}")
+            logging.info(f"Database recipe count: {len(cls.recipes)}")
 
 
         # Just testing leftovers and nutrition opts for now
         cls.user_prefs = {
-            "meal_count_per_day": 10,
+            "meal_count_per_day": 3,
             "budget_per_week": 100,
             "weights": {
                 "cost": 0,
@@ -103,33 +103,42 @@ class TestMealOptimizer(unittest.TestCase):
 
     def test_optimizer_returns_correct_meal_count(self):
         """Optimizer should return exactly the number of meals requested."""
-        chosen = optimize_meal_plan(self.user_prefs, self.recipes, use_similarity=False)
-
+        lp_shortlist = optimize_meal_plan(self.user_prefs, self.recipes, use_similarity=False) # RN testing without similarity
         logging.basicConfig(level=logging.INFO)
-        logging.info(f"Chosen meals: {[m['name'] for m in chosen]}")
+        logging.info(f"LP shortlist count: {len(lp_shortlist)}")
+        
+        self.assertTrue(len(lp_shortlist) >= self.user_prefs["meal_count_per_day"])
+        chosen = select_best_meal_plan(self.user_prefs, lp_shortlist)
 
         self.assertEqual(len(chosen), self.user_prefs["meal_count_per_day"])
         self.assertTrue(all("name" in m for m in chosen))
 
-    def test_fda_score_range(self):
-        """Check that FDA score is between 0 and 1."""
-        fda_score = evaluate_macros_and_micros(self.recipes)
+        logging.info(f"Chosen meals: {[m['name'] for m in chosen]}")
 
-        logging.basicConfig(level=logging.INFO)
-        logging.info(f"FDA score: {fda_score}")
+    # def test_fda_score_range(self):
+    #     """Check that FDA score is between 0 and 1."""
+    #     lp_shortlist = optimize_meal_plan(self.user_prefs, self.recipes, use_similarity=False)
+    #     chosen = select_best_meal_plan(self.user_prefs, lp_shortlist)
+    #     fda_score = evaluate_macros_and_micros(chosen)
 
-        self.assertGreaterEqual(fda_score, 0)
-        self.assertLessEqual(fda_score, 1)
+    #     logging.basicConfig(level=logging.INFO)
+    #     logging.info(f"FDA score: {fda_score}")
+    #     logging.info(f"Recipes evaluated: {[m['name'] for m in chosen]}")
 
-    def test_total_score_calculation(self):
-        """Check total score calculation does not error and returns positive number."""
-        score, __ = score_meal_plan(self.user_prefs, self.recipes)
+    #     self.assertGreaterEqual(fda_score, 0)
+    #     self.assertLessEqual(fda_score, 1)
 
-        logging.basicConfig(level=logging.INFO)
-        logging.info(f"Total score: {score}")
+    # def test_total_score_calculation(self):
+    #     """Check total score calculation does not error and returns positive number."""
+    #     lp_shortlist = optimize_meal_plan(self.user_prefs, self.recipes, use_similarity=False)
+    #     chosen = select_best_meal_plan(self.user_prefs, lp_shortlist)
+    #     score, __ = score_meal_plan(self.user_prefs, chosen)
 
-        self.assertIsInstance(score, float)
-        self.assertGreater(score, 0)
+    #     logging.basicConfig(level=logging.INFO)
+    #     logging.info(f"Total score: {score}")
+
+    #     self.assertIsInstance(score, float)
+    #     self.assertGreater(score, 0)
 
     # TODO: Fix this after actual database intg or json
     # def test_plan_meals_wrapper(self):

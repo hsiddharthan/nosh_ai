@@ -1,3 +1,4 @@
+import itertools
 import json
 import numpy as np
 import os
@@ -115,6 +116,7 @@ def match_macros(user_goal, meals):
 
 """
 TODO: Diversity should be based on actual cuisine types or ingredients
+Rn there is a transformer that tests similarity by name
 Should pull most important ingredients ie meat, spice profiles, etc. with Gemini
 """
 def diversity_measure(candidate_meals, diversity_rule):
@@ -272,7 +274,27 @@ def compute_similarity_matrix(recipes):
     np.fill_diagonal(sim_matrix, 0)
     return sim_matrix
 
+def compute_candidate_pool_bounds(meal_count, weekly_budget, weekly_variety_factor=2.5):
+    effective_meals = int(meal_count * weekly_variety_factor)
 
+    base_min = effective_meals * 5
+    base_max = effective_meals * 10
+
+    if weekly_budget < 70:
+        base_min *= 1.2
+        base_max *= 1.2
+
+    min_pool = int(max(10, base_min))
+    max_pool = int(max(min_pool + 5, base_max))
+
+    return min_pool, max_pool
+
+
+"""
+LP optimization on hard contraints of cost and time with optional similarity constraints for diversity.
+Shortlists the full recipe catalog down to then be scored and ranked by the more complex FDA score and 
+user preference scoring.
+"""
 def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
     N = len(recipes)
     select = pulp.LpVariable.dicts("select", range(N), 0, 1, cat="Binary")
@@ -305,23 +327,59 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
     model += w.get("cost",0) * cost_term + w.get("time",0) * time_term + w.get("diversity",0) * diversity_term
 
     # Meal count & budget constraints
-    model += pulp.lpSum(select[i] for i in range(N)) == user_prefs["meal_count_per_day"]
+    min_pool, max_pool = compute_candidate_pool_bounds(
+        user_prefs["meal_count_per_day"],
+        user_prefs["budget_per_week"]
+    )
+    min_pool = min(min_pool, len(recipes))
+    max_pool = min(max_pool, len(recipes))
+
+    model += pulp.lpSum(select[i] for i in range(N)) >= min_pool
+    model += pulp.lpSum(select[i] for i in range(N)) <= max_pool
     model += pulp.lpSum(recipes[i].get("cost", 0) * select[i] for i in range(N)) <= (user_prefs["budget_per_week"]/7*user_prefs["meal_count_per_day"])
     
     model.solve()
-    chosen = []
+    lp_shortlist = []
     for i in range(N):
         val = select[i].value()
         if val is not None and val > 0.5:
-            chosen.append(recipes[i])
+            lp_shortlist.append(recipes[i])
+    return lp_shortlist
 
-    return chosen
+""""
+Selects the best meal plan from a candidate pool based on nutrition score.
+TODO: Change from picking one days worth of meals to picking a full week
+"""
+def select_best_meal_plan(user_prefs, candidate_pool):
+    best_plan = None
+    best_score = -1
+
+    k = user_prefs["meal_count_per_day"]
+
+    if len(candidate_pool) < k:
+        raise ValueError(
+            f"Not enough candidate meals ({len(candidate_pool)}) "
+            f"to select {k} meals"
+        )
+
+    for plan in itertools.combinations(candidate_pool, k):
+        nutrition_score = evaluate_macros_and_micros(
+            plan,
+            target_macro_ratio=user_prefs["macro_goal_ratio"]
+        )
+        if nutrition_score > best_score:
+            best_score = nutrition_score
+            best_plan = plan
+
+    return best_plan
+
 
 # TODO: Change from csv to json input and also database
 def plan_meals(user_prefs, recipe_csv_path, use_similarity=True):
     with open(recipe_csv_path) as f:
         recipes = json.load(f)
-    chosen_meals = optimize_meal_plan(user_prefs, recipes, use_similarity=use_similarity)
+    lp_shortlist = optimize_meal_plan(user_prefs, recipes, use_similarity=use_similarity)
+    chosen_meals = select_best_meal_plan(user_prefs, lp_shortlist)
     score, fda_score = score_meal_plan(user_prefs, chosen_meals)
 
     return {
