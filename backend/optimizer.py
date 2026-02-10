@@ -1,9 +1,13 @@
 import itertools
 import json
 import numpy as np
-import os
-from sentence_transformers import SentenceTransformer, util
 import pulp
+import re
+from collections import Counter
+from collections import defaultdict
+
+#TODO delete this later
+import logging
 
 # SOURCE: https://www.fda.gov/food/nutrition-facts-label/daily-value-nutrition-and-supplement-facts-labels
 FDA_GUIDELINES= {
@@ -115,7 +119,7 @@ def match_macros(user_goal, meals):
     return 1 - diff
 
 """
-TODO: Diversity should be based on actual cuisine types or ingredients
+TODO: #3 Diversity should be based on actual cuisine types or ingredients
 Rn there is a transformer that tests similarity by name
 Should pull most important ingredients ie meat, spice profiles, etc. with Gemini
 """
@@ -265,14 +269,75 @@ def score_meal_plan(user_prefs, candidate_meals):
     )
     return total_score, nutrition_score
 
+def extract_ingredients(recipe):
+    ingredient_stopwords = {
+        "SALT", "PEPPER", "WATER", "OIL",
+        "BUTTER", "SUGAR", "FLOUR", "GARLIC", "ONION",
+        "SPICES", "SEASONING"
+    }
 
-def compute_similarity_matrix(recipes):
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    texts = [f"{r['name']}: {r['ingredients']}" for r in recipes]
-    embeddings = model.encode(texts, normalize_embeddings=True)
-    sim_matrix = util.cos_sim(embeddings, embeddings).cpu().numpy()
-    np.fill_diagonal(sim_matrix, 0)
-    return sim_matrix
+    # TODO #7 maybe auto populate this with Gemini data base cleaning later
+    ATTRIBUTE_TOKENS = {
+        "DRY", "FRZ", "FRSH", "RAW",
+        "SKN", "WHL", "BLD",
+        "BRSD", "BRLD", "GRDS", "MIX",
+        "PREP", "ALL", "FAT", "CKD",
+        "RSTD", "CHOIC", "DRND", "SEL",
+        "CND", "BNLESS", "CHOC", "SOL",
+        "RST", "RTE", "TOP", "WHITE", 
+        "RED", "SHLDR", "RND", "MATURE",
+        "ADDED", "REG", "COND", "ONLY"
+    }
+    raw = recipe.get("name", "")
+
+    # Remove special characters and convert to lowercase
+    raw = re.sub(r'[^a-zA-Z\s]', ' ', raw)
+    parts = raw.split()
+    clean = []
+    for p in parts:
+        ing = p.strip()
+        if ing and ing not in ingredient_stopwords and ing not in ATTRIBUTE_TOKENS:
+            clean.append(ing)
+    
+    clean = [c for c in clean if len(c) > 2]
+    return set(clean)
+
+def compute_ingredient_frequencies(recipes):
+    counter = Counter()
+    for r in recipes:
+        ingredients = extract_ingredients(r)
+        counter.update(ingredients)
+    return counter
+
+def auto_core_ingredients(
+    recipes,
+    top_k=20,
+    min_ratio=0.12
+):
+    freqs = compute_ingredient_frequencies(recipes)
+    N = len(recipes)
+
+    core = set()
+    for ing, count in freqs.items():
+        if count / N >= min_ratio:
+            core.add(ing)
+
+    for ing, _ in freqs.most_common(top_k):
+        core.add(ing)
+
+    return core
+
+"""
+TODO: #5 Add major recipe ingredients here instead of just name.
+"""
+# def compute_similarity_matrix(recipes):
+#     model = SentenceTransformer("all-MiniLM-L6-v2")
+#     texts = [f"{r['name']}" for r in recipes]
+#     embeddings = model.encode(texts, normalize_embeddings=True)
+#     sim_matrix = util.cos_sim(embeddings, embeddings).cpu().numpy()
+#     np.fill_diagonal(sim_matrix, 0)
+#     return sim_matrix
+#     return
 
 def compute_candidate_pool_bounds(meal_count, weekly_budget, weekly_variety_factor=2.5):
     effective_meals = int(meal_count * weekly_variety_factor)
@@ -304,27 +369,63 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
     w = user_prefs["weights"]
 
     # Only compute similarity matrix if requested
-    if use_similarity:
-        sim_matrix = compute_similarity_matrix(recipes)
-        for i in range(N):
-            for j in range(i + 1, N):
-                y[(i, j)] = pulp.LpVariable(f"y_{i}_{j}", 0, 1, cat="Binary")
-                # Linearized diversity constraints
-                model += y[(i, j)] <= select[i]
-                model += y[(i, j)] <= select[j]
-                model += y[(i, j)] >= select[i] + select[j] - 1
-    else:
-        sim_matrix = np.zeros((N, N))
+    # TODO: #6 Make this a preprocessing step and store in database for efficiency
+    # if use_similarity:
+    #     sim_matrix = compute_similarity_matrix(recipes)
+    #     for i in range(N):
+    #         for j in range(i + 1, N):
+    #             y[(i, j)] = pulp.LpVariable(f"y_{i}_{j}", 0, 1, cat="Binary")
+    #             # Linearized diversity constraints
+    #             model += y[(i, j)] <= select[i]
+    #             model += y[(i, j)] <= select[j]
+    #             model += y[(i, j)] >= select[i] + select[j] - 1
+    # else:
+    #     sim_matrix = np.zeros((N, N))
+
+    # diversity
+    CORE_INGREDIENTS = auto_core_ingredients(recipes)
+    logging.basicConfig(level=logging.INFO)
+    logging.info(f"Identified core ingredients for diversity constraint: {CORE_INGREDIENTS}")
+
+    ingredient_to_recipes = defaultdict(list)
+
+    for i, r in enumerate(recipes):
+        for ing in extract_ingredients(r):
+            if ing in CORE_INGREDIENTS:
+                ingredient_to_recipes[ing].append(i)
+
+    INGREDIENT_PENALTY_WEIGHT = 0.3
+    MAX_PER_INGREDIENT = np.ceil(user_prefs["meal_count_per_day"] * INGREDIENT_PENALTY_WEIGHT * 7)
+    excess = {}
+    for ing, idxs in ingredient_to_recipes.items():
+        excess[ing] = pulp.LpVariable(
+            f"excess_{ing}",
+            lowBound=0,
+            cat="Continuous"
+        )
+
+        model += (
+            pulp.lpSum(select[i] for i in idxs)
+            <= MAX_PER_INGREDIENT + excess[ing]
+        )
+    ingredient_penalty_term = pulp.lpSum(
+        excess[ing] for ing in excess
+    )
+
+
+    # MAX_PER_INGREDIENT = np.ceil(user_prefs["meal_count_per_day"] / 4)
+    # excess = pulp.LpVariable(f"excess_{ing}", lowBound=0)
+    # model += pulp.lpSum(select[i] for i in idxs) <= MAX_PER_INGREDIENT + excess
+
+    # model += INGREDIENT_PENALTY_WEIGHT * excess
+
 
     # Objective terms
     cost_term = pulp.lpSum(recipes[i].get("cost", 0) * select[i] for i in range(N))
     time_term = pulp.lpSum(recipes[i].get("time", 0) * select[i] for i in range(N))
-    if use_similarity:
-        diversity_term = pulp.lpSum(sim_matrix[i][j] * y[(i, j)] for i in range(N) for j in range(i + 1, N))
-    else:
-        diversity_term = 0
+    # diversity_term = pulp.lpSum(sim_matrix[i][j] * y[(i, j)] for i in range(N) for j in range(i + 1, N))\
 
-    model += w.get("cost",0) * cost_term + w.get("time",0) * time_term + w.get("diversity",0) * diversity_term
+    model += w.get("cost",0) * cost_term + w.get("time",0) * time_term + w.get("diversity",0) + INGREDIENT_PENALTY_WEIGHT * ingredient_penalty_term
 
     # Meal count & budget constraints
     min_pool, max_pool = compute_candidate_pool_bounds(
@@ -348,7 +449,7 @@ def optimize_meal_plan(user_prefs, recipes, use_similarity=True):
 
 """"
 Selects the best meal plan from a candidate pool based on nutrition score.
-TODO: Change from picking one days worth of meals to picking a full week
+TODO: #2 Change from picking one days worth of meals to picking a full week
 """
 def select_best_meal_plan(user_prefs, candidate_pool):
     best_plan = None
@@ -367,6 +468,8 @@ def select_best_meal_plan(user_prefs, candidate_pool):
             plan,
             target_macro_ratio=user_prefs["macro_goal_ratio"]
         )
+        # logging.basicConfig(level=logging.INFO)
+        # logging.info(f":{[m['name'] for m in plan]} - Nutrition score: {nutrition_score}")
         if nutrition_score > best_score:
             best_score = nutrition_score
             best_plan = plan
@@ -374,7 +477,7 @@ def select_best_meal_plan(user_prefs, candidate_pool):
     return best_plan
 
 
-# TODO: Change from csv to json input and also database
+# TODO: #4 Change from csv to json input and also database
 def plan_meals(user_prefs, recipe_csv_path, use_similarity=True):
     with open(recipe_csv_path) as f:
         recipes = json.load(f)

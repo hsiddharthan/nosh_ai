@@ -7,3 +7,6 @@ __pycache__/
 .pytest_cache/
 
 venv/
+
+# og recipe dataset
+backend/data/recipes_data.csv

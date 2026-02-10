@@ -3,11 +3,12 @@ import json
 import csv
 import os
 import logging
+import numpy as np
 from backend.optimizer import plan_meals, optimize_meal_plan, score_meal_plan, evaluate_macros_and_micros, select_best_meal_plan
 
 
 TEST_DIR = os.path.dirname(__file__)
-SYNTHETIC_CSV_PATH = os.path.join(TEST_DIR, "USDA.csv")
+SYNTHETIC_CSV_PATH = os.path.join(TEST_DIR, "/data/USDA.csv")
 
 """
 Unit tests for meal optimizer using USDA Nutrient Database
@@ -82,6 +83,8 @@ class TestMealOptimizer(unittest.TestCase):
             # test if we have loaded recipes
             logging.basicConfig(level=logging.INFO)
             logging.info(f"Database recipe count: {len(cls.recipes)}")
+            logging.info(f"Avg calories: {np.mean([r['macronutrients']['calories'] for r in cls.recipes])}")
+            logging.info(f"Avg protein: {np.mean([r['macronutrients']['protein'] for r in cls.recipes])}")
 
 
         # Just testing leftovers and nutrition opts for now
@@ -101,12 +104,14 @@ class TestMealOptimizer(unittest.TestCase):
             "cuisine_preferences": ["vegetarian", "greek", "italian"],
         }
 
+
     def test_optimizer_returns_correct_meal_count(self):
         """Optimizer should return exactly the number of meals requested."""
         lp_shortlist = optimize_meal_plan(self.user_prefs, self.recipes, use_similarity=False) # RN testing without similarity
         logging.basicConfig(level=logging.INFO)
         logging.info(f"LP shortlist count: {len(lp_shortlist)}")
-        
+        logging.info(f"LP shortlist meals: {[m['name'] for m in lp_shortlist]}")
+
         self.assertTrue(len(lp_shortlist) >= self.user_prefs["meal_count_per_day"])
         chosen = select_best_meal_plan(self.user_prefs, lp_shortlist)
 
@@ -140,7 +145,7 @@ class TestMealOptimizer(unittest.TestCase):
     #     self.assertIsInstance(score, float)
     #     self.assertGreater(score, 0)
 
-    # TODO: Fix this after actual database intg or json
+    # TODO: #1 Fix this after actual database intg or json
     # def test_plan_meals_wrapper(self):
     #     """Test the plan_meals wrapper that loads CSV."""
     #     chosen = plan_meals(self.user_prefs, recipe_csv_path=SYNTHETIC_CSV_PATH, use_similarity=True)
