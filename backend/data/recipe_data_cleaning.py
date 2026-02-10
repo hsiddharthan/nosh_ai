@@ -95,7 +95,7 @@ for i, chunk in enumerate(
             chunk["ingredients_raw"].astype(str).str.strip().ne("")
         ]
 
-    chunk["ingredients_norm"] = chunk["ingredients"].apply(parse_ingredients)
+    chunk["ingredients_norm"] = chunk["ingredients_raw"].apply(parse_ingredients)
     chunk["ingredient_count"] = chunk["ingredients_norm"].apply(len)
 
     chunk = chunk[
