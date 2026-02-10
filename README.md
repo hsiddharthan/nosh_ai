@@ -2,7 +2,7 @@
 
 ## Overview
 
-NoshAI is a Chrome-based, backend- and data-driven meal planning system designed to **help people take control of eating and meal preparation regardless of energy level, time, or budget constraints**.
+NoshAI is a web-based, backend- and data-driven meal planning system designed to **help people take control of eating and meal preparation regardless of energy level, time, or budget constraints**.
 
 The goal of NoshAI is to empower users to make practical, lower-friction food decisions by turning their existing pantry into a smart assistant that:
 
@@ -12,7 +12,7 @@ The goal of NoshAI is to empower users to make practical, lower-friction food de
 
 The system transforms raw pantry inventories and user-defined goals into optimized, explainable meal plans. It prioritizes **interpretability, privacy, and reproducibility**, rather than treating meal planning as a black-box recommendation task.
 
-This repository currently contains the **data pipelines, backend logic, and optimization framework**. Frontend work (Chrome extension) is under active development and maintained separately.
+This repository currently contains the **data pipelines, backend logic, and optimization framework**. Frontend work is under active development and maintained separately.
 
 ---
 
