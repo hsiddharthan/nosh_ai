@@ -17,3 +17,4 @@ pyarrow
 duckdb 
 rapidfuzz 
 tqdm
+google-genai
